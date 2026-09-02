@@ -38,6 +38,54 @@ func gitQuiet(args ...string) {
 	_ = exec.Command("git", args...).Run()
 }
 
+// headBranchName is the branch the combined commits are built on, derived from
+// the arguments the user passed so that re-running the same command reuses it.
+func headBranchName(userArgs []string) string {
+	return fmt.Sprintf("combine-prs-%s", strings.Join(userArgs, "-"))
+}
+
+// cherryPickArgs is the git invocation that replays a PR's commits, or nil for
+// a PR with no commits to replay.
+func cherryPickArgs(prInfo PRInfo) []string {
+	if len(prInfo.Commits) == 0 {
+		return nil
+	}
+	args := []string{"cherry-pick"}
+	for _, commit := range prInfo.Commits {
+		args = append(args, commit.Oid)
+	}
+	return args
+}
+
+func prTitle(prInfoList []PRInfo) string {
+	prNumbers := []string{}
+	for _, prInfo := range prInfoList {
+		prNumbers = append(prNumbers, fmt.Sprintf("#%d", prInfo.Number))
+	}
+	return fmt.Sprintf("Combine %s", strings.Join(prNumbers, ", "))
+}
+
+func prBody(prInfoList []PRInfo) string {
+	var body strings.Builder
+	body.WriteString("Combines the following pull requests:\n\n")
+	for _, prInfo := range prInfoList {
+		fmt.Fprintf(&body, "- #%d %s\n", prInfo.Number, prInfo.Title)
+	}
+	return body.String()
+}
+
+func viewPR(arg string) (PRInfo, error) {
+	stdout, stderr, err := gh.Exec("pr", "view", arg, "--json", "number,headRefName,title,body,commits")
+	if err != nil {
+		return PRInfo{}, fmt.Errorf("gh pr view %s: %w: %s", arg, err, strings.TrimSpace(stderr.String()))
+	}
+	var prInfo PRInfo
+	if err := json.NewDecoder(&stdout).Decode(&prInfo); err != nil {
+		return PRInfo{}, fmt.Errorf("gh pr view %s: %w", arg, err)
+	}
+	return prInfo, nil
+}
+
 func main() {
 	userArgs := os.Args[1:]
 	if len(userArgs) == 0 {
@@ -49,19 +97,14 @@ func main() {
 	prInfoList := []PRInfo{}
 
 	for _, arg := range userArgs {
-		prInfoBuffer, stderr, err := gh.Exec("pr", "view", arg, "--json", "number,headRefName,title,body,commits")
-		if err != nil {
-			log.Fatalf("gh pr view %s: %v: %s", arg, err, strings.TrimSpace(stderr.String()))
-		}
-		var prInfo PRInfo
-		err = json.NewDecoder(&prInfoBuffer).Decode(&prInfo)
+		prInfo, err := viewPR(arg)
 		if err != nil {
 			log.Fatal(err)
 		}
 		prInfoList = append(prInfoList, prInfo)
 	}
 
-	headBranchName := fmt.Sprintf("combine-prs-%s", strings.Join(userArgs, "-"))
+	headBranchName := headBranchName(userArgs)
 
 	// A previous run may have died mid-cherry-pick, which blocks switching branches.
 	gitQuiet("cherry-pick", "--abort")
@@ -78,16 +121,12 @@ func main() {
 	}
 
 	for _, prInfo := range prInfoList {
-		if len(prInfo.Commits) == 0 {
+		args := cherryPickArgs(prInfo)
+		if args == nil {
 			continue
 		}
 
-		cherryPickArgs := []string{"cherry-pick"}
-		for _, commit := range prInfo.Commits {
-			cherryPickArgs = append(cherryPickArgs, commit.Oid)
-		}
-
-		if err := git(cherryPickArgs...); err != nil {
+		if err := git(args...); err != nil {
 			// Leave the repo out of the cherry-pick so the next run can switch branches.
 			gitQuiet("cherry-pick", "--abort")
 			log.Fatal(err)
@@ -98,21 +137,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	prNumbers := []string{}
-	var prBody strings.Builder
-	prBody.WriteString("Combines the following pull requests:\n\n")
-	for _, prInfo := range prInfoList {
-		prNumbers = append(prNumbers, fmt.Sprintf("#%d", prInfo.Number))
-		fmt.Fprintf(&prBody, "- #%d %s\n", prInfo.Number, prInfo.Title)
-	}
-	prTitle := fmt.Sprintf("Combine %s", strings.Join(prNumbers, ", "))
-
 	stdout, stderr, err := gh.Exec(
 		"pr", "create",
 		"--base", baseBranchName,
 		"--head", headBranchName,
-		"--title", prTitle,
-		"--body", prBody.String(),
+		"--title", prTitle(prInfoList),
+		"--body", prBody(prInfoList),
 	)
 	if err != nil {
 		log.Fatalf("gh pr create: %v: %s", err, strings.TrimSpace(stderr.String()))
