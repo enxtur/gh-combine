@@ -4,6 +4,8 @@ A [GitHub CLI](https://cli.github.com) extension that combines several pull requ
 
 It cherry-picks the commits from each PR onto a fresh branch off `main`, pushes it, and opens a combined PR that links back to the originals.
 
+Documentation: <https://enxtur.github.io/gh-combine/>
+
 ## Installation
 
 ```sh

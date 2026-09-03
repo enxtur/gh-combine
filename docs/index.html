@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gh-combine — combine several pull requests into one</title>
+<meta name="description" content="A GitHub CLI extension that cherry-picks the commits from several pull requests onto a fresh branch and opens a combined PR.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='14'>%F0%9F%94%80</text></svg>">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --bg-soft: #f6f8fa;
+    --fg: #1f2328;
+    --fg-muted: #59636e;
+    --border: #d1d9e0;
+    --accent: #0969da;
+    --code-bg: #f6f8fa;
+    --term-bg: #24292f;
+    --term-fg: #e6edf3;
+    --term-dim: #8b949e;
+    --term-accent: #7ee787;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117;
+      --bg-soft: #151b23;
+      --fg: #e6edf3;
+      --fg-muted: #9198a1;
+      --border: #3d444d;
+      --accent: #4493f8;
+      --code-bg: #151b23;
+      --term-bg: #010409;
+      --term-fg: #e6edf3;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  }
+  code, kbd, pre { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---- header ---- */
+  header { border-bottom: 1px solid var(--border); }
+  .masthead {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; padding: 16px 0;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .brand svg { width: 22px; height: 22px; fill: currentColor; }
+  .nav { display: flex; gap: 18px; font-size: 14px; }
+  .nav a { color: var(--fg-muted); }
+  .nav a:hover { color: var(--fg); text-decoration: none; }
+
+  /* ---- hero ---- */
+  .hero { padding: 64px 0 56px; text-align: center; }
+  .hero h1 { margin: 0; font-size: 44px; line-height: 1.15; letter-spacing: -0.02em; }
+  .hero p.tagline {
+    margin: 16px auto 0; max-width: 34em;
+    font-size: 19px; color: var(--fg-muted);
+  }
+  .cta { margin-top: 28px; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 9px 18px; border-radius: 8px;
+    border: 1px solid var(--border); font-size: 15px; font-weight: 500;
+    color: var(--fg); background: var(--bg-soft);
+  }
+  .btn:hover { text-decoration: none; border-color: var(--fg-muted); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.08); }
+
+  /* ---- terminal ---- */
+  .terminal {
+    margin: 40px 0 0; text-align: left;
+    background: var(--term-bg); color: var(--term-fg);
+    border-radius: var(--radius); overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .terminal .bar {
+    display: flex; gap: 7px; align-items: center;
+    padding: 11px 14px; border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+  .terminal .bar i { width: 11px; height: 11px; border-radius: 50%; display: block; }
+  .terminal .bar i:nth-child(1) { background: #ff5f57; }
+  .terminal .bar i:nth-child(2) { background: #febc2e; }
+  .terminal .bar i:nth-child(3) { background: #28c840; }
+  .terminal pre {
+    margin: 0; padding: 16px 18px; overflow-x: auto;
+    font-size: 13.5px; line-height: 1.75;
+  }
+  .terminal .p { color: var(--term-accent); }
+  .terminal .c { color: var(--term-dim); }
+
+  /* ---- sections ---- */
+  section { padding: 44px 0; border-top: 1px solid var(--border); }
+  h2 { font-size: 22px; margin: 0 0 14px; letter-spacing: -0.01em; }
+  h3 { font-size: 15px; margin: 26px 0 8px; }
+  p { margin: 0 0 14px; }
+  p.lead { color: var(--fg-muted); }
+
+  pre.code {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 14px 16px; overflow-x: auto;
+    font-size: 13.5px; line-height: 1.6; margin: 0 0 14px;
+  }
+  :not(pre) > code {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 1px 5px; font-size: 85%;
+  }
+
+  ul { margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  li:last-child { margin-bottom: 0; }
+
+  /* ---- steps ---- */
+  .steps { list-style: none; padding: 0; margin: 0; counter-reset: step; }
+  .steps > li {
+    position: relative; padding-left: 40px; margin-bottom: 24px; counter-increment: step;
+  }
+  .steps > li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 1px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--bg-soft); border: 1px solid var(--border);
+    color: var(--fg-muted); font-size: 13px; font-weight: 600;
+    display: grid; place-items: center;
+  }
+  .steps h3 { margin-top: 0; }
+
+  footer {
+    border-top: 1px solid var(--border); padding: 28px 0 44px;
+    color: var(--fg-muted); font-size: 14px;
+    display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+  }
+
+  @media (max-width: 600px) {
+    .hero { padding: 44px 0 36px; }
+    .hero h1 { font-size: 34px; }
+    .hero p.tagline { font-size: 17px; }
+    .nav { gap: 14px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap masthead">
+    <span class="brand">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.254V3.25v.005a.75.75 0 1 1 0-.005Zm.75 2.236v5.02a2.25 2.25 0 1 1-1.5 0V5.49a2.25 2.25 0 1 1 1.5 0ZM5 12.75a.75.75 0 1 0 0 .005v-.005ZM11.75 3.5a.75.75 0 1 0 0-.005V3.5Zm-.75 2.24v1.51a3.75 3.75 0 0 1-3.75 3.75H6.5V9.5h.75A2.25 2.25 0 0 0 9.5 7.25V5.74a2.25 2.25 0 1 1 1.5 0Z"/></svg>
+      gh-combine
+    </span>
+    <nav class="nav">
+      <a href="#install">Install</a>
+      <a href="#usage">Usage</a>
+      <a href="#notes">Notes</a>
+      <a href="https://github.com/enxtur/gh-combine">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="hero">
+    <h1>Combine several pull requests into one</h1>
+    <p class="tagline">
+      A <a href="https://cli.github.com">GitHub CLI</a> extension that cherry-picks the commits from
+      each PR onto a fresh branch, pushes it, and opens a combined PR that links back to the originals.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="#install">Get started</a>
+      <a class="btn" href="https://github.com/enxtur/gh-combine">View on GitHub</a>
+    </div>
+
+    <div class="terminal">
+      <div class="bar"><i></i><i></i><i></i></div>
+<pre><span class="p">$</span> gh combine 12 34 56
+
+<span class="c">Switched to a new branch 'combine-prs-12-34-56'</span>
+<span class="c">[combine-prs-12-34-56 a1b2c3d] Add retry to the fetch client</span>
+<span class="c">[combine-prs-12-34-56 e4f5a6b] Bump actions/checkout from 6 to 7</span>
+<span class="c">[combine-prs-12-34-56 c7d8e9f] Document the cache headers</span>
+<span class="c">To github.com:you/your-repo.git</span>
+
+Created PR: https://github.com/you/your-repo/pull/57
+</pre>
+    </div>
+  </div>
+
+  <section id="install">
+    <h2>Installation</h2>
+    <p class="lead">Requires the <a href="https://cli.github.com">GitHub CLI</a>.</p>
+<pre class="code">gh extension install enxtur/gh-combine</pre>
+  </section>
+
+  <section id="usage">
+    <h2>Usage</h2>
+    <p class="lead">Run from a clone of the repository the PRs belong to:</p>
+<pre class="code">gh combine 12 34 56</pre>
+    <p>Each argument is anything <code>gh pr view</code> accepts — a PR number, URL, or branch name.</p>
+
+    <h3>What it does</h3>
+    <ol class="steps">
+      <li>
+        <h3>Creates the branch</h3>
+        <p class="lead">Branches <code>combine-prs-12-34-56</code> off <code>main</code>, from scratch each run.</p>
+      </li>
+      <li>
+        <h3>Replays the commits</h3>
+        <p class="lead">Cherry-picks the commits of #12, #34, and #56 onto it, in the order you listed them.</p>
+      </li>
+      <li>
+        <h3>Pushes and opens the PR</h3>
+        <p class="lead">Force-pushes the branch to <code>origin</code> and opens a PR titled <code>Combine #12, #34, #56</code>, with the original PRs listed in the body.</p>
+      </li>
+    </ol>
+  </section>
+
+  <section id="notes">
+    <h2>Notes</h2>
+    <ul>
+      <li>The base branch is <code>main</code>.</li>
+      <li>The head branch is force-pushed, and re-running the same command recreates it from scratch — so you can rerun after a PR is updated.</li>
+      <li>If a cherry-pick conflicts, the run aborts it and exits with the error. Resolve the conflict in the source PR and try again.</li>
+    </ul>
+  </section>
+
+  <section id="development">
+    <h2>Development</h2>
+<pre class="code">go build
+gh extension install .</pre>
+    <p>Releases are built by <a href="https://github.com/cli/gh-extension-precompile"><code>cli/gh-extension-precompile</code></a> when a <code>v*</code> tag is pushed.</p>
+  </section>
+
+</main>
+
+<footer class="wrap">
+  <span>Built with the <a href="https://github.com/cli/go-gh">go-gh</a> library.</span>
+  <span><a href="https://github.com/enxtur/gh-combine">enxtur/gh-combine</a></span>
+</footer>
+
+</body>
+</html>
